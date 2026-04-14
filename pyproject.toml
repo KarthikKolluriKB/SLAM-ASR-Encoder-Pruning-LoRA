@@ -1,0 +1,31 @@
+[project]
+name = "slam-asr-encoder-pruning-lora"
+version = "0.1.0"
+description = "Efficient ASR with encoder pruning and LoRA fine-tuning in SLAM-ASR"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "blobfile>=3.1.0",
+    "datacollective>=0.0.34",
+    "datasets>=4.0.0",
+    "evaluate>=0.4.6",
+    "hf-xet>=1.1.9",
+    "huggingface-hub[cli]>=0.34.4",
+    "jiwer>=4.0.0",
+    "librosa>=0.10.0",
+    "matplotlib>=3.10.8",
+    "omegaconf>=2.3.0",
+    "openai-whisper>=20250625",
+    "peft>=0.17.1",
+    "protobuf>=6.32.0",
+    "scipy>=1.15.3",
+    "seaborn>=0.13.2",
+    "sentencepiece>=0.2.1",
+    "soundfile>=0.13.1",
+    "tiktoken>=0.11.0",
+    "torch>=2.8.0",
+    "torchaudio>=2.8.0",
+    "torchtnt>=0.2.4",
+    "transformers>=4.55.4",
+    "wandb>=0.21.3",
+]
