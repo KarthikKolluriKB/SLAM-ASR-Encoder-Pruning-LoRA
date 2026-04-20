@@ -1,0 +1,45 @@
+from typing import Optional, Dict, Any 
+import wandb 
+
+def init_wandb(
+        use_wandb: bool, 
+        project: str,
+        run_name: str,
+        tags, 
+        entity: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None
+        ) -> Optional[wandb.wandb_sdk.wandb_run.Run]:
+    """
+    Initialize a Weights & Biases (wandb) run if use_wandb is True.
+
+    The W&B API key is read from the WANDB_API_KEY environment variable
+    (or ~/.netrc); it is never read from code.
+
+    Args:
+        use_wandb (bool): Whether to initialize wandb.
+        project (str): The name of the wandb project.
+        run_name (str): The name of the wandb run.
+        tags (list): List of tags for the wandb run.
+        entity (Optional[str]): The wandb entity (username or team name).
+        config (Optional[Dict[str, Any]]): Configuration dictionary to log with wandb.
+
+    Returns:
+        Optional[wandb.wandb_sdk.wandb_run.Run]: The initialized wandb run or None if not used.
+    """
+    # if not using wandb, return None
+    if not use_wandb:
+        return None
+    
+    try:
+        wandb_run = wandb.init(
+            project=project,
+            entity=entity,
+            name=run_name,
+            tags=tags,
+            config=config
+        )
+        print(f"[wandb] Successfully initialized run: {wandb_run.url}")
+        return wandb_run
+    except Exception as e:
+        print(f"[wandb] ERROR: Failed to initialize wandb: {e}")
+        return None    
