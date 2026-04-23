@@ -1,0 +1,314 @@
+"""
+Run multiple training experiments sequentially with a cooldown period between runs.
+
+This script takes multiple config files as input and runs training for each one,
+with a configurable gap between experiments to allow GPU memory cleanup and prevent crashes.
+
+Usage:
+    python scripts/run_sequential_training.py config1.yaml config2.yaml config3.yaml
+    python scripts/run_sequential_training.py configs/whisper_small/danish/train/*.yaml --gap 10
+    python scripts/run_sequential_training.py -c configs/whisper_small/danish/train/baseline.yaml configs/whisper_small/danish/train/baseline_lora.yaml
+    
+    # Run on specific GPU
+    python scripts/run_sequential_training.py --gpu 0 config1.yaml config2.yaml
+    python scripts/run_sequential_training.py --gpu 1 config3.yaml config4.yaml
+"""
+import os
+import sys
+import argparse
+import subprocess
+import time
+import gc
+from pathlib import Path
+from datetime import datetime
+from typing import List
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Fix CUDA memory fragmentation (prevents OOM on long training runs)
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+
+def clear_gpu_memory():
+    """Attempt to clear GPU memory between runs."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.synchronize()
+            print("  [OK] GPU cache cleared")
+    except ImportError:
+        print("  [WARN] PyTorch not available, skipping GPU cleanup")
+    except Exception as e:
+        print(f"  [WARN] GPU cleanup failed: {e}")
+    
+    # Force garbage collection
+    gc.collect()
+    print("  [OK] Garbage collection completed")
+
+
+def format_time(seconds: float) -> str:
+    """Format seconds into human-readable string."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    elif seconds < 3600:
+        minutes = seconds / 60
+        return f"{minutes:.1f}m"
+    else:
+        hours = seconds / 3600
+        return f"{hours:.1f}h"
+
+
+def countdown_timer(seconds: int, message: str = "Waiting"):
+    """Display a countdown timer."""
+    print(f"\n{message}: ", end="", flush=True)
+    for remaining in range(seconds, 0, -1):
+        mins, secs = divmod(remaining, 60)
+        print(f"\r{message}: {mins:02d}:{secs:02d} remaining", end="", flush=True)
+        time.sleep(1)
+    print(f"\r{message}: Done!                    ")
+
+
+def run_training(config_path: str, run_number: int, total_runs: int, gpu_id: int = None) -> tuple:
+    """
+    Run training with the specified config file.
+    
+    Args:
+        config_path: Path to the config file
+        run_number: Current experiment number
+        total_runs: Total number of experiments
+        gpu_id: GPU device ID to use (None for default)
+    
+    Returns:
+        tuple: (success: bool, duration_seconds: float)
+    """
+    config_name = Path(config_path).stem
+    
+    gpu_info = f" [GPU {gpu_id}]" if gpu_id is not None else ""
+    print(f"\n{'='*70}")
+    print(f"  EXPERIMENT [{run_number}/{total_runs}]{gpu_info}: {config_name}")
+    print(f"{'='*70}")
+    print(f"  Config: {config_path}")
+    if gpu_id is not None:
+        print(f"  GPU: CUDA:{gpu_id}")
+    print(f"  Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'-'*70}\n")
+    
+    start_time = time.time()
+    
+    env = os.environ.copy()
+    env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    if gpu_id is not None:
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    
+    try:
+        result = subprocess.run(
+            [sys.executable, "train.py", "--config", config_path],
+            check=True,
+            cwd=Path(__file__).parent.parent,  # Run from project root
+            env=env
+        )
+        success = result.returncode == 0
+    except subprocess.CalledProcessError as e:
+        print(f"\n  [FAIL] Training failed with return code {e.returncode}")
+        success = False
+    except KeyboardInterrupt:
+        print("\n\n  [WARN] Training interrupted by user")
+        raise
+    except Exception as e:
+        print(f"\n  [FAIL] Training failed with error: {e}")
+        success = False
+    
+    duration = time.time() - start_time
+    
+    status = "[OK] COMPLETED" if success else "[FAIL] FAILED"
+    print(f"\n{'-'*70}")
+    print(f"  {status} in {format_time(duration)}")
+    print(f"  Ended: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    return success, duration
+
+
+def validate_configs(config_paths: List[str]) -> List[str]:
+    """Validate that all config files exist and return absolute paths."""
+    valid_configs = []
+    
+    for config in config_paths:
+        config_path = Path(config)
+        
+        # If relative path, try from project root
+        if not config_path.is_absolute():
+            config_path = Path(__file__).parent.parent / config
+        
+        if not config_path.exists():
+            print(f"  [WARN] Config not found, skipping: {config}")
+            continue
+        
+        if not config_path.suffix in ['.yaml', '.yml']:
+            print(f"  [WARN] Not a YAML file, skipping: {config}")
+            continue
+            
+        valid_configs.append(str(config_path))
+    
+    return valid_configs
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Run multiple training experiments sequentially with cooldown periods",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run specific configs
+  python scripts/run_sequential_training.py configs/whisper_small/danish/train/baseline.yaml configs/whisper_small/danish/train/baseline_lora.yaml
+  
+  # Run all configs in a folder (bash/powershell glob)
+  python scripts/run_sequential_training.py configs/whisper_small/danish/train/*.yaml
+  
+  # Custom gap between experiments (10 minutes)
+  python scripts/run_sequential_training.py -c config1.yaml config2.yaml --gap 10
+  
+  # Dry run to see what would be executed
+  python scripts/run_sequential_training.py configs/whisper_small/danish/train/*.yaml --dry-run
+        """
+    )
+    parser.add_argument(
+        "configs",
+        nargs="*",
+        help="Config files to run (can also use -c/--config)"
+    )
+    parser.add_argument(
+        "-c", "--config",
+        nargs="+",
+        default=[],
+        help="Config files to run"
+    )
+    parser.add_argument(
+        "-g", "--gap",
+        type=int,
+        default=1,
+        help="Gap between experiments in minutes (default: 1)"
+    )
+    parser.add_argument(
+        "--gpu",
+        type=int,
+        default=None,
+        help="GPU device ID to use (e.g., 0 or 1). Sets CUDA_VISIBLE_DEVICES."
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would be run without executing"
+    )
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="Continue with next experiment even if one fails"
+    )
+    parser.add_argument(
+        "--no-countdown",
+        action="store_true",
+        help="Disable countdown timer display (just sleep)"
+    )
+    
+    args = parser.parse_args()
+    
+    all_configs = args.configs + args.config
+    
+    if not all_configs:
+        parser.print_help()
+        print("\n  Error: No config files provided")
+        sys.exit(1)
+    
+    print("\nValidating config files...")
+    valid_configs = validate_configs(all_configs)
+    
+    if not valid_configs:
+        print("  [FAIL] No valid config files found")
+        sys.exit(1)
+    
+    gap_seconds = args.gap * 60
+    total_runs = len(valid_configs)
+    
+    print(f"\n{'='*70}")
+    print(f"  SEQUENTIAL TRAINING PLAN")
+    print(f"{'='*70}")
+    print(f"  Total experiments: {total_runs}")
+    print(f"  Gap between runs:  {args.gap} minutes")
+    if args.gpu is not None:
+        print(f"  GPU Device:        CUDA:{args.gpu}")
+    print(f"  Continue on error: {'Yes' if args.continue_on_error else 'No'}")
+    print(f"\n  Experiments in order:")
+    for i, config in enumerate(valid_configs, 1):
+        print(f"    {i}. {Path(config).stem}")
+    print(f"{'='*70}")
+    
+    if args.dry_run:
+        gpu_prefix = f"CUDA_VISIBLE_DEVICES={args.gpu} " if args.gpu is not None else ""
+        print(f"\nDRY RUN - Commands that would be executed:\n")
+        for i, config in enumerate(valid_configs, 1):
+            print(f"  [{i}/{total_runs}] {gpu_prefix}python train.py --config {config}")
+            if i < total_runs:
+                print(f"          -> Wait {args.gap} minutes for GPU cooldown")
+        print("\n  No actual training was performed.")
+        return
+    
+    print(f"\nStarting in 5 seconds... (Ctrl+C to cancel)")
+    time.sleep(5)
+    
+    results = []
+    total_start_time = time.time()
+    
+    for i, config in enumerate(valid_configs, 1):
+        try:
+            success, duration = run_training(config, i, total_runs, gpu_id=args.gpu)
+            results.append({
+                "config": Path(config).stem,
+                "success": success,
+                "duration": duration
+            })
+            
+            if not success and not args.continue_on_error:
+                print(f"\n  [WARN] Stopping due to failed experiment (use --continue-on-error to override)")
+                break
+            
+            if i < total_runs:
+                print(f"\nCooling down GPU before next experiment...")
+                clear_gpu_memory()
+                
+                if args.no_countdown:
+                    print(f"  Sleeping for {args.gap} minutes...")
+                    time.sleep(gap_seconds)
+                else:
+                    countdown_timer(gap_seconds, "  GPU cooldown")
+                    
+        except KeyboardInterrupt:
+            print(f"\n\n{'='*70}")
+            print("  [WARN] INTERRUPTED BY USER")
+            print(f"{'='*70}")
+            break
+    
+    total_duration = time.time() - total_start_time
+    successful = sum(1 for r in results if r["success"])
+    failed = sum(1 for r in results if not r["success"])
+    
+    print(f"\n{'='*70}")
+    print(f"  TRAINING SUMMARY")
+    print(f"{'='*70}")
+    print(f"  Total time:    {format_time(total_duration)}")
+    print(f"  Completed:     {len(results)}/{total_runs}")
+    print(f"  Successful:    {successful}")
+    print(f"  Failed:        {failed}")
+    print(f"\n  Results:")
+    for r in results:
+        status = "[OK]" if r["success"] else "[FAIL]"
+        print(f"    {status} {r['config']:<40} ({format_time(r['duration'])})")
+    print(f"{'='*70}\n")
+    
+    sys.exit(0 if failed == 0 else 1)
+
+
+if __name__ == "__main__":
+    main()
