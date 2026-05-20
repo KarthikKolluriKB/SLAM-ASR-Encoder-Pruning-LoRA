@@ -2,7 +2,7 @@
 
 Official code for **"On the Role of Encoder Depth: Pruning Whisper and LoRA Fine-Tuning in SLAM-ASR"** (SPEAKABLE Workshop @ LREC 2026).
 
-**Paper:** [arXiv:2603.27981](https://arxiv.org/abs/2603.27981)
+**Paper:** [arXiv:2603.27981](https://arxiv.org/abs/2603.27981) · [LREC 2026 Proceedings (PDF, p. 197)](http://lrec-conf.org/proceedings/lrec2026/workshops/speakable/2026.speakable-1.0.pdf#page=197)
 
 We investigate the role of encoder depth in SLAM-ASR by pruning layers from the Whisper encoder and examining how well LoRA fine-tuning on the downstream LLM compensates for the resulting WER degradation.
 
@@ -195,6 +195,7 @@ If you use this code, please cite:
   author        = {Kolluri, Ganesh Pavan Kartikeya Bharadwaj and Kampouridis, Michael and Shekhar, Ravi},
   booktitle     = {Proceedings of the SPEAKABLE Workshop at LREC 2026},
   year          = {2026},
+  url           = {http://lrec-conf.org/proceedings/lrec2026/workshops/speakable/2026.speakable-1.0.pdf#page=197},
   eprint        = {2603.27981},
   archivePrefix = {arXiv},
   primaryClass  = {cs.CL}
